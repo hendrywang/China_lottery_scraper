@@ -22,21 +22,20 @@ class LotteryResultsScraper:
         self.driver = webdriver.Chrome(service=service, options=options)
         self.base_url = "https://www.sporttery.cn/ctzc/kjgg/index.html"
         
-        # Define issue numbers for different lottery types
-        self.default_issues = {
-            '胜负游戏': '24167',
-            '任选9场': '24167',
-            '6场半全场': '24214',
-            '4场进球': '24214'
-        }
-        
         self.select_id_map = {
             '胜负游戏': 'sfc_issue',
             '任选9场': 'rj_issue',
             '6场半全场': 'bqc_issue',
             '4场进球': 'jq_issue'
         }
-    
+        
+        self.game_id_map = {
+            '胜负游戏': 'sfc_game',
+            '任选9场': 'rj_game',
+            '6场半全场': 'bqc_game',
+            '4场进球': 'jq_game'
+        }
+
     def wait_for_element(self, by, value, timeout=10):
         try:
             element = WebDriverWait(self.driver, timeout).until(
@@ -50,35 +49,80 @@ class LotteryResultsScraper:
     def clean_team_name(self, text):
         return ''.join(text.split())
 
-    def get_issue_results(self, issue_value, lottery_type):
-        try:
-            # Use the type-specific issue number if no specific issue is provided
-            actual_issue = issue_value or self.default_issues.get(lottery_type)
-            select_id = self.select_id_map.get(lottery_type)
+    def process_match_data(self, lottery_type, rows, i):
+        match_data = {}
+        
+        if lottery_type == '6场半全场':
+            match_index = i
             
-            if select_id:
-                select_element = self.wait_for_element(By.ID, select_id)
-                if select_element:
-                    select = Select(select_element)
-                    select.select_by_value(str(actual_issue))
-                    time.sleep(2)
-                    return True
-        except Exception as e:
-            print(f"Error selecting issue {issue_value} for {lottery_type}: {str(e)}")
-        return False
-
-    def get_issue_number(self, lottery_type):
-        try:
-            select_id = self.select_id_map.get(lottery_type)
-            if select_id:
-                select_element = self.wait_for_element(By.ID, select_id)
-                if select_element:
-                    select = Select(select_element)
-                    selected_option = select.first_selected_option
-                    return selected_option.get_attribute("value")
-        except Exception as e:
-            print(f"Error getting issue number: {str(e)}")
-        return self.default_issues.get(lottery_type)
+            if len(rows) > 1:
+                home_cells = rows[1].find_elements(By.TAG_NAME, "td")
+                if match_index < len(home_cells):
+                    match_data['Home_Team'] = self.clean_team_name(home_cells[match_index].get_attribute("textContent"))
+            
+            if len(rows) > 3:
+                away_cells = rows[3].find_elements(By.TAG_NAME, "td")
+                if match_index < len(away_cells):
+                    match_data['Away_Team'] = self.clean_team_name(away_cells[match_index].get_attribute("textContent"))
+            
+            if len(rows) > 5:
+                score_cells = rows[5].find_elements(By.TAG_NAME, "td")
+                if match_index * 2 + 1 < len(score_cells):
+                    match_data['Half_Time_Score'] = score_cells[match_index * 2].text.strip()
+                    match_data['Full_Time_Score'] = score_cells[match_index * 2 + 1].text.strip()
+            
+            if len(rows) > 6:
+                result_cells = rows[6].find_elements(By.TAG_NAME, "td")
+                if match_index * 2 + 1 < len(result_cells):
+                    match_data['Half_Time_Result'] = result_cells[match_index * 2].text.strip()
+                    match_data['Full_Time_Result'] = result_cells[match_index * 2 + 1].text.strip()
+        
+        elif lottery_type == '4场进球':
+            match_index = i
+            
+            if len(rows) > 1:
+                home_cells = rows[1].find_elements(By.TAG_NAME, "td")
+                if match_index < len(home_cells):
+                    match_data['Home_Team'] = self.clean_team_name(home_cells[match_index].get_attribute("textContent"))
+            
+            if len(rows) > 3:
+                away_cells = rows[3].find_elements(By.TAG_NAME, "td")
+                if match_index < len(away_cells):
+                    match_data['Away_Team'] = self.clean_team_name(away_cells[match_index].get_attribute("textContent"))
+            
+            if len(rows) > 5:
+                score_cells = rows[5].find_elements(By.TAG_NAME, "td")
+                if match_index < len(score_cells):
+                    match_data['Score'] = score_cells[match_index].text.strip()
+            
+            if len(rows) > 6:
+                result_cells = rows[6].find_elements(By.TAG_NAME, "td")
+                if match_index * 2 + 1 < len(result_cells):
+                    match_data['Home_Goals'] = result_cells[match_index * 2].text.strip()
+                    match_data['Away_Goals'] = result_cells[match_index * 2 + 1].text.strip()
+        
+        else:
+            if len(rows) > 1:
+                home_cells = rows[1].find_elements(By.TAG_NAME, "td")
+                if i < len(home_cells):
+                    match_data['Home_Team'] = self.clean_team_name(home_cells[i].text)
+            
+            if len(rows) > 3:
+                away_cells = rows[3].find_elements(By.TAG_NAME, "td")
+                if i < len(away_cells):
+                    match_data['Away_Team'] = self.clean_team_name(away_cells[i].text)
+            
+            if len(rows) > 4:
+                score_cells = rows[4].find_elements(By.TAG_NAME, "td")
+                if i < len(score_cells):
+                    match_data['Score'] = score_cells[i].text.strip()
+            
+            if len(rows) > 5:
+                result_cells = rows[5].find_elements(By.TAG_NAME, "td")
+                if i < len(result_cells):
+                    match_data['Result'] = result_cells[i].text.strip()
+        
+        return match_data
 
     def scrape_lottery_results(self, issue=None):
         print("Starting results scraper...")
@@ -87,7 +131,6 @@ class LotteryResultsScraper:
         time.sleep(5)
         
         current_date = datetime.now().strftime("%Y%m%d")
-        all_results = []
         
         try:
             lottery_tabs = self.driver.find_elements(By.CSS_SELECTOR, ".m-cz-tit span")
@@ -99,68 +142,61 @@ class LotteryResultsScraper:
                     tab.click()
                     time.sleep(2)
                     
-                    # Use type-specific issue if no specific issue is provided
-                    actual_issue = issue or self.default_issues.get(lottery_type)
-                    if actual_issue:
-                        self.get_issue_results(actual_issue, lottery_type)
+                    results = []
                     
-                    date_element = self.wait_for_element(By.CSS_SELECTOR, "[id^='openTime_kj_']")
-                    date = date_element.text.replace('开奖日期：', '') if date_element else None
+                    date_id_map = {
+                        '胜负游戏': 'openTime_kj_sfc',
+                        '任选9场': 'openTime_kj_rj',
+                        '6场半全场': 'openTime_kj_bqc',
+                        '4场进球': 'openTime_kj_jq'
+                    }
                     
-                    issue_number = self.get_issue_number(lottery_type)
-                    print(f"Got issue number for {lottery_type}: {issue_number}")
+                    date_id = date_id_map.get(lottery_type)
+                    if date_id:
+                        date_element = self.wait_for_element(By.ID, date_id)
+                        date = date_element.text.replace('开奖日期：', '') if date_element else None
+                        print(f"Got date for {lottery_type}: {date}")
                     
-                    table = self.wait_for_element(By.CSS_SELECTOR, ".m-tabCz")
-                    if table:
-                        rows = table.find_elements(By.TAG_NAME, "tr")
-                        match_numbers = [th.text for th in rows[0].find_elements(By.TAG_NAME, "th")]
-                        
-                        for i in range(len(match_numbers)):
-                            match_data = {
-                                'Date': date,
-                                'Issue': issue_number,
-                                'Lottery_Type': lottery_type,
-                                'Match_Number': match_numbers[i],
-                            }
+                    select_id = self.select_id_map.get(lottery_type)
+                    if select_id:
+                        select_element = self.wait_for_element(By.ID, select_id)
+                        if select_element:
+                            select = Select(select_element)
+                            issue_number = select.first_selected_option.get_attribute("value")
+                    
+                    game_id = self.game_id_map.get(lottery_type)
+                    if game_id:
+                        table = self.wait_for_element(By.ID, game_id)
+                        if table:
+                            rows = table.find_elements(By.TAG_NAME, "tr")
                             
-                            if len(rows) > 1:
-                                home_cells = rows[1].find_elements(By.TAG_NAME, "td")
-                                if i < len(home_cells):
-                                    match_data['Home_Team'] = self.clean_team_name(home_cells[i].text)
+                            if lottery_type == '6场半全场':
+                                match_count = 6
+                            elif lottery_type == '4场进球':
+                                match_count = 4
+                            else:
+                                match_numbers = [th.text for th in rows[0].find_elements(By.TAG_NAME, "th")]
+                                match_count = len(match_numbers)
                             
-                            if len(rows) > 3:
-                                away_cells = rows[3].find_elements(By.TAG_NAME, "td")
-                                if i < len(away_cells):
-                                    match_data['Away_Team'] = self.clean_team_name(away_cells[i].text)
-                            
-                            if len(rows) > 4:
-                                score_cells = rows[4].find_elements(By.TAG_NAME, "td")
-                                if i < len(score_cells):
-                                    match_data['Score'] = score_cells[i].text.strip()
-                            
-                            if len(rows) > 5:
-                                result_cells = rows[5].find_elements(By.TAG_NAME, "td")
-                                if i < len(result_cells):
-                                    match_data['Result'] = result_cells[i].text.strip()
-                            
-                            all_results.append(match_data)
-                            
+                            for i in range(match_count):
+                                match_data = {
+                                    'Period': issue_number,
+                                    'Date': date,
+                                    'Match_Number': str(i + 1),
+                                }
+                                
+                                match_data.update(self.process_match_data(lottery_type, rows, i))
+                                results.append(match_data)
+                    
+                    if results:
+                        df = pd.DataFrame(results)
+                        filename = f'lottery_results_{lottery_type}_{current_date}.csv'
+                        df.to_csv(filename, index=False, encoding='utf-8-sig')
+                        print(f"Saved {lottery_type} results to {filename}")
+                                
                 except Exception as e:
                     print(f"Error processing lottery type {lottery_type}: {str(e)}")
                     continue
-            
-            if all_results:
-                df = pd.DataFrame(all_results)
-                issue_suffix = f"_{issue}" if issue else ""
-                filename = f'lottery_results_{current_date}{issue_suffix}.csv'
-                df.to_csv(filename, index=False, encoding='utf-8-sig')
-                print(f"All results saved to {filename}")
-                
-                for lottery_type in set(df['Lottery_Type']):
-                    type_df = df[df['Lottery_Type'] == lottery_type]
-                    type_filename = f'lottery_results_{lottery_type}_{current_date}_{self.default_issues[lottery_type]}.csv'
-                    type_df.to_csv(type_filename, index=False, encoding='utf-8-sig')
-                    print(f"Saved {lottery_type} results to {type_filename}")
             
         except Exception as e:
             print(f"Error occurred: {str(e)}")
@@ -176,5 +212,4 @@ class LotteryResultsScraper:
 
 if __name__ == "__main__":
     scraper = LotteryResultsScraper()
-    # No need to specify issue, will use default issues for each type
     scraper.run()

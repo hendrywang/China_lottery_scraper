@@ -196,7 +196,7 @@ class LotteryScraper:
                 if matches:
                     print(f"Saving {len(matches)} matches for {game_type}...")
                     df = pd.DataFrame(matches)
-                    filename = f'lottery_matches_{game_type}_{current_date}.csv'
+                    filename = f'lottery_selling_{game_type}_{current_date}.csv'
                     df.to_csv(filename, index=False, encoding='utf-8-sig')
                     print(f"Data saved to {filename}")
             
