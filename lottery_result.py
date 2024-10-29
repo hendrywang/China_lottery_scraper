@@ -190,7 +190,7 @@ class LotteryResultsScraper:
                     
                     if results:
                         df = pd.DataFrame(results)
-                        filename = f'lottery_results_{lottery_type}_{current_date}.csv'
+                        filename = f'lottery_results_{lottery_type}_{issue_number}.csv'
                         df.to_csv(filename, index=False, encoding='utf-8-sig')
                         print(f"Saved {lottery_type} results to {filename}")
                                 
