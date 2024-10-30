@@ -116,6 +116,23 @@ class LotteryScraper:
                             self.driver.execute_script("arguments[0].click();", period_tab)
                             time.sleep(3)
                             
+                            # Get deadline time
+                            try:
+                                deadline_element = WebDriverWait(self.driver, 5).until(
+                                    EC.presence_of_element_located((By.CSS_SELECTOR, ".m-czTime-r.f-fr"))
+                                )
+                                deadline_text = deadline_element.text.strip()
+                                if '开售时间' in deadline_text:
+                                    sale_time = deadline_text.replace('开售时间：', '')
+                                    deadline_time = ''
+                                else:
+                                    deadline_time = deadline_text.replace('投注截止时间：', '')
+                                    sale_time = ''
+                            except Exception as e:
+                                print(f"Error getting deadline time: {str(e)}")
+                                deadline_time = ''
+                                sale_time = ''
+                            
                             # Wait for table and process matches
                             try:
                                 table = WebDriverWait(self.driver, 10).until(
@@ -131,9 +148,11 @@ class LotteryScraper:
                                         if len(cells) < 5:
                                             continue
                                         
-                                        # Basic match data
+                                        # Basic match data with deadline time
                                         match_data = {
                                             'period': period_info,
+                                            'deadline_time': deadline_time,
+                                            'sale_time': sale_time,
                                             'match_num': cells[0].text.strip(),
                                             'league': cells[1].find_element(By.TAG_NAME, "span").text.strip(),
                                             'start_time': cells[2].text.strip()
