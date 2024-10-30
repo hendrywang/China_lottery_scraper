@@ -16,6 +16,13 @@ class LotteryScraper:
         options.add_argument('--headless')
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--window-size=1920,1080')
+        options.add_argument('--start-maximized')
+        options.add_argument('--enable-javascript')
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        options.add_experimental_option('excludeSwitches', ['enable-automation'])
+        options.add_experimental_option('useAutomationExtension', False)
         options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
         
         service = Service(ChromeDriverManager().install())
@@ -32,11 +39,36 @@ class LotteryScraper:
             print(f"Timeout waiting for element: {value}")
             return None
 
+    def wait_for_period_info(self, timeout=10):
+        try:
+            WebDriverWait(self.driver, timeout).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".m-czNums li.on span"))
+            )
+            return True
+        except TimeoutException:
+            print("Timeout waiting for period information")
+            return False
+
     def scrape_match_data(self):
         print("Starting scraper...")
         self.driver.get(self.base_url)
         print("Page loaded, waiting for content...")
-        time.sleep(5)
+        
+        # Wait for JavaScript to load
+        time.sleep(10)  # Increased wait time
+        
+        # Execute JavaScript to check if page is ready
+        is_ready = self.driver.execute_script("return document.readyState") == "complete"
+        print(f"Page ready state: {is_ready}")
+        
+        # Wait for specific element that indicates the page is fully loaded
+        try:
+            WebDriverWait(self.driver, 20).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".m-sfcL"))
+            )
+        except TimeoutException:
+            print("Timeout waiting for page to load completely")
+            return
         
         current_date = datetime.now().strftime("%Y%m%d")
         matches_by_type = {
@@ -47,166 +79,147 @@ class LotteryScraper:
         }
         
         try:
-            game_types = self.driver.find_elements(By.CSS_SELECTOR, ".m-czTitle-l li")
+            # Wait for game type tabs
+            tabs = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".m-czTitle-l li"))
+            )
+            print(f"Found {len(tabs)} tabs")
             
-            for index, game_type in enumerate(game_types):
+            for tab in tabs:
                 try:
-                    game_type.click()
+                    game_type_text = tab.text.strip()
+                    if not game_type_text in matches_by_type:
+                        continue
+                    
+                    print(f"\nProcessing game type: {game_type_text}")
+                    
+                    # Click tab and wait
+                    self.driver.execute_script("arguments[0].scrollIntoView(true);", tab)
                     time.sleep(2)
-                    game_type_text = game_type.text.strip()
-                    print(f"Processing game type: {game_type_text}")
+                    self.driver.execute_script("arguments[0].click();", tab)
+                    time.sleep(3)
                     
-                    # Get period number and deadline
-                    period_element = self.driver.find_element(By.CSS_SELECTOR, ".m-czNums span").text.strip()
-                    deadline_element = self.driver.find_element(By.CSS_SELECTOR, ".m-czTime-r").text.strip()
-                    deadline_time = deadline_element.replace('投注截止时间：', '')
+                    # Get period info
+                    try:
+                        period_element = self.driver.find_element(By.CSS_SELECTOR, ".m-czNums li.on span")
+                        period_info = period_element.text.strip() + "期"
+                    except:
+                        period_info = ""
                     
-                    # Wait for table to load after clicking tab
-                    self.wait_for_element(By.CSS_SELECTOR, ".m-czTab tbody tr")
-                    
-                    matches = self.driver.find_elements(By.CSS_SELECTOR, ".m-czTab tbody tr:not([style*='display: none'])")
-                    
-                    for match in matches:
-                        try:
-                            tds = match.find_elements(By.TAG_NAME, "td")
-                            if len(tds) >= 4:
+                    # Wait for table and process based on game type
+                    try:
+                        table = WebDriverWait(self.driver, 10).until(
+                            EC.visibility_of_element_located((By.CSS_SELECTOR, ".m-czTab"))
+                        )
+                        
+                        rows = table.find_elements(By.CSS_SELECTOR, "tbody tr:not([style*='display: none'])")
+                        print(f"Found {len(rows)} match rows")
+                        
+                        for row in rows:
+                            try:
+                                cells = row.find_elements(By.TAG_NAME, "td")
+                                if len(cells) < 5:
+                                    continue
+                                
+                                # Basic match data
                                 match_data = {
-                                    'period': period_element,
-                                    'deadline': deadline_time,
-                                    'match_num': tds[0].text.strip(),
-                                    'league': tds[1].text.strip(),
-                                    'start_time': tds[2].text.strip(),
+                                    'period': period_info,
+                                    'match_num': cells[0].text.strip(),
+                                    'league': cells[1].find_element(By.TAG_NAME, "span").text.strip(),
+                                    'start_time': cells[2].text.strip()
                                 }
                                 
-                                # Handle team names
-                                teams_element = tds[3].find_element(By.CLASS_NAME, "team")
-                                teams_text = teams_element.text.strip()
+                                # Get team names
+                                team_div = cells[3].find_element(By.CLASS_NAME, "team")
+                                teams_text = team_div.text.strip()
                                 if "VS" in teams_text:
-                                    home_team, away_team = teams_text.split("VS")
-                                    match_data['home_team'] = home_team.strip()
-                                    match_data['away_team'] = away_team.strip()
+                                    home, away = teams_text.split("VS")
+                                    match_data['home_team'] = home.strip()
+                                    match_data['away_team'] = away.strip()
                                 
-                                if game_type_text == '4场进球':
-                                    # Get period number and deadline for 4场进球
+                                # Handle different game types
+                                if game_type_text in ['胜负游戏', '任选9场']:
                                     try:
-                                        period_info = self.driver.find_element(By.CSS_SELECTOR, ".m-czNums li.on span").text.strip()
-                                        deadline_info = self.driver.find_element(By.CSS_SELECTOR, ".m-czTime-r.f-fr").text.strip()
-                                        deadline_time = deadline_info.replace('投注截止时间：', '')
-                                        
-                                        match_data['period'] = period_info
-                                        match_data['deadline'] = deadline_time
+                                        odds = cells[4].find_elements(By.CSS_SELECTOR, ".tdDiv span em")
+                                        if len(odds) >= 3:
+                                            match_data.update({
+                                                'bet_win': odds[0].text.strip(),
+                                                'bet_draw': odds[1].text.strip(),
+                                                'bet_lose': odds[2].text.strip()
+                                            })
                                     except Exception as e:
-                                        print(f"Error getting period/deadline info for 4场进球: {str(e)}")
-                                        match_data['period'] = ''
-                                        match_data['deadline'] = ''
-                                    
-                                    # Handle betting options for 4场进球
-                                    betting_divs = tds[5].find_elements(By.CSS_SELECTOR, ".tdDiv")
-                                    if len(betting_divs) == 2:
-                                        # Home team goals
-                                        home_options = betting_divs[0].find_elements(By.CSS_SELECTOR, "span em")
-                                        home_values = [opt.text.strip() for opt in home_options]
-                                        if len(home_values) >= 4:
-                                            for i, val in enumerate(['0', '1', '2', '3+']):
-                                                match_data[f'home_goals_{val}'] = home_values[i]
+                                        print(f"Error getting odds: {str(e)}")
                                         
-                                        # Away team goals
-                                        away_options = betting_divs[1].find_elements(By.CSS_SELECTOR, "span em")
-                                        away_values = [opt.text.strip() for opt in away_options]
-                                        if len(away_values) >= 4:
-                                            for i, val in enumerate(['0', '1', '2', '3+']):
-                                                match_data[f'away_goals_{val}'] = away_values[i]
-                                
                                 elif game_type_text == '6场半全场':
-                                    # Get period number and deadline for 6场半全场
                                     try:
-                                        period_info = self.driver.find_element(By.CSS_SELECTOR, ".m-czNums li.on span").text.strip()
-                                        deadline_info = self.driver.find_element(By.CSS_SELECTOR, ".m-czTime-r.f-fr").text.strip()
-                                        deadline_time = deadline_info.replace('投注截止时间：', '')
-                                        
-                                        match_data['period'] = period_info
-                                        match_data['deadline'] = deadline_time
+                                        betting_divs = cells[5].find_elements(By.CSS_SELECTOR, ".tdDiv")
+                                        if len(betting_divs) == 2:
+                                            half_time = betting_divs[0].find_elements(By.CSS_SELECTOR, "span em")
+                                            full_time = betting_divs[1].find_elements(By.CSS_SELECTOR, "span em")
+                                            
+                                            if len(half_time) >= 3:
+                                                match_data.update({
+                                                    'half_win': half_time[0].text.strip(),
+                                                    'half_draw': half_time[1].text.strip(),
+                                                    'half_lose': half_time[2].text.strip()
+                                                })
+                                            
+                                            if len(full_time) >= 3:
+                                                match_data.update({
+                                                    'full_win': full_time[0].text.strip(),
+                                                    'full_draw': full_time[1].text.strip(),
+                                                    'full_lose': full_time[2].text.strip()
+                                                })
                                     except Exception as e:
-                                        print(f"Error getting period/deadline info for 6场半全场: {str(e)}")
-                                        match_data['period'] = ''
-                                        match_data['deadline'] = ''
-                                    
-                                    # Handle betting options for 6场半全场
-                                    betting_divs = tds[5].find_elements(By.CSS_SELECTOR, ".tdDiv")
-                                    if len(betting_divs) == 2:
-                                        # Half-time options
-                                        half_time_options = betting_divs[0].find_elements(By.CSS_SELECTOR, "span em")
-                                        half_time_values = [opt.text.strip() for opt in half_time_options]
-                                        if len(half_time_values) >= 3:
-                                            match_data['half_win'] = half_time_values[0]
-                                            match_data['half_draw'] = half_time_values[1]
-                                            match_data['half_lose'] = half_time_values[2]
+                                        print(f"Error getting half/full time odds: {str(e)}")
                                         
-                                        # Full-time options
-                                        full_time_options = betting_divs[1].find_elements(By.CSS_SELECTOR, "span em")
-                                        full_time_values = [opt.text.strip() for opt in full_time_options]
-                                        if len(full_time_values) >= 3:
-                                            match_data['full_win'] = full_time_values[0]
-                                            match_data['full_draw'] = full_time_values[1]
-                                            match_data['full_lose'] = full_time_values[2]
-                                
-                                elif game_type_text == '任选9场':
-                                    # Get period number and deadline
+                                elif game_type_text == '4场进球':
                                     try:
-                                        period_info = self.driver.find_element(By.CSS_SELECTOR, ".m-czNums li.on span").text.strip()
-                                        deadline_info = self.driver.find_element(By.CSS_SELECTOR, ".m-czTime-r.f-fr").text.strip()
-                                        deadline_time = deadline_info.replace('投注截止时间：', '')
-                                        
-                                        # Add period and deadline to match data
-                                        match_data['period'] = period_info
-                                        match_data['deadline'] = deadline_time
+                                        betting_divs = cells[5].find_elements(By.CSS_SELECTOR, ".tdDiv")
+                                        if len(betting_divs) == 2:
+                                            home_goals = betting_divs[0].find_elements(By.CSS_SELECTOR, "span em")
+                                            away_goals = betting_divs[1].find_elements(By.CSS_SELECTOR, "span em")
+                                            
+                                            for i, val in enumerate(['0', '1', '2', '3+']):
+                                                if i < len(home_goals):
+                                                    match_data[f'home_goals_{val}'] = home_goals[i].text.strip()
+                                                if i < len(away_goals):
+                                                    match_data[f'away_goals_{val}'] = away_goals[i].text.strip()
                                     except Exception as e:
-                                        print(f"Error getting period/deadline info: {str(e)}")
-                                        match_data['period'] = ''
-                                        match_data['deadline'] = ''
-                                    
-                                    # Handle betting options
-                                    betting_options = tds[4].find_elements(By.CSS_SELECTOR, ".tdDiv span em")
-                                    if len(betting_options) >= 3:
-                                        match_data['bet_win'] = betting_options[0].text.strip()
-                                        match_data['bet_draw'] = betting_options[1].text.strip()
-                                        match_data['bet_lose'] = betting_options[2].text.strip()
-                                
-                                else:
-                                    # For other game types (胜负游戏 and 任选9场)
-                                    betting_options = tds[4].find_elements(By.CSS_SELECTOR, ".tdDiv span em")
-                                    if len(betting_options) >= 3:
-                                        match_data['bet_win'] = betting_options[0].text.strip()
-                                        match_data['bet_draw'] = betting_options[1].text.strip()
-                                        match_data['bet_lose'] = betting_options[2].text.strip()
+                                        print(f"Error getting goals odds: {str(e)}")
                                 
                                 matches_by_type[game_type_text].append(match_data)
-                                print(f"Successfully processed match: {match_data['home_team']} vs {match_data['away_team']}")
+                                print(f"Processed match: {match_data.get('home_team', '')} vs {match_data.get('away_team', '')}")
                                 
-                        except Exception as e:
-                            print(f"Error processing individual match: {str(e)}")
-                            continue
-                            
+                            except Exception as e:
+                                print(f"Error processing match row: {str(e)}")
+                                continue
+                                
+                    except Exception as e:
+                        print(f"Error processing table: {str(e)}")
+                        continue
+                        
                 except Exception as e:
                     print(f"Error processing game type {game_type_text}: {str(e)}")
                     continue
             
-            # Save matches by game type to separate CSV files
+            # Save results
             for game_type, matches in matches_by_type.items():
                 if matches:
-                    print(f"Saving {len(matches)} matches for {game_type}...")
+                    print(f"\nSaving {len(matches)} matches for {game_type}...")
                     df = pd.DataFrame(matches)
                     filename = f'lottery_selling_{game_type}_{current_date}.csv'
                     df.to_csv(filename, index=False, encoding='utf-8-sig')
                     print(f"Data saved to {filename}")
-            
+                else:
+                    print(f"\nNo matches found for {game_type}")
+                    
         except Exception as e:
             print(f"Error occurred: {str(e)}")
-            self.driver.save_screenshot("error_screenshot.png")
-            print("Error screenshot saved as error_screenshot.png")
-        
+            print(self.driver.page_source[:1000])
+            
         finally:
-            print("Closing browser...")
+            print("\nClosing browser...")
             self.driver.quit()
 
     def run(self):
